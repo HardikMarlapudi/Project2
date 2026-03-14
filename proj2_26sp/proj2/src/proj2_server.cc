@@ -101,7 +101,14 @@ void HandleRequest(const std::string& datagram) {
 
     for (auto& file : file_hashes) {
         for (auto& hash : file) {
-            output.insert(output.end(), hash.begin(), hash.end());
+
+            char buffer[65];
+
+        for (size_t i = 0; i < 32; i++) {
+            sprintf(buffer + (i * 2), "%02x", hash[i]);
+        }
+
+            output.insert(output.end(), buffer, buffer + 64);
         }
     }
 

@@ -26,32 +26,44 @@ Request ParseRequest(const std::string& data) {
     Request req;
 
     const char* ptr = data.data();
-    std::size_t offset = 0;
+    size_t size = data.size();
+    size_t offset = 0;
 
-    auto read_u32 = [&](std::uint32_t* out) {
-        std::memcpy(out, ptr + offset, 4);
+    auto read_u32 = [&](uint32_t &value) {
+        if (offset + 4 > size) {
+            throw std::runtime_error("Malformed request");
+        }
+        std::memcpy(&value, ptr + offset, 4);
         offset += 4;
     };
 
-    std::uint32_t len;
-    read_u32(&len);
+    uint32_t reply_len;
+    read_u32(reply_len);
 
-    req.reply_socket.assign(ptr + offset, len);
-    offset += len;
+    if (offset + reply_len > size) {
+        throw std::runtime_error("Malformed request");
+    }
 
-    std::uint32_t file_count;
-    read_u32(&file_count);
+    req.reply_socket.assign(ptr + offset, reply_len);
+    offset += reply_len;
 
-    for (std::uint32_t i = 0; i < file_count; i++) {
+    uint32_t file_count;
+    read_u32(file_count);
 
-        std::uint32_t path_len;
-        read_u32(&path_len);
+    for (uint32_t i = 0; i < file_count; i++) {
+
+        uint32_t path_len;
+        read_u32(path_len);
+
+        if (offset + path_len > size) {
+            throw std::runtime_error("Malformed request");
+        }
 
         std::string path(ptr + offset, path_len);
         offset += path_len;
 
-        std::uint32_t rows;
-        read_u32(&rows);
+        uint32_t rows;
+        read_u32(rows);
 
         req.paths.push_back(path);
         req.rows.push_back(rows);

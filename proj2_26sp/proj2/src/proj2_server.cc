@@ -1,156 +1,117 @@
-#include "proj2_server.h"
+// Copyright Hardik Marlapudi
 
 #include "proj2/lib/domain_socket.h"
 #include "proj2/lib/file_reader.h"
 #include "proj2/lib/sha_solver.h"
 
 #include <iostream>
-#include <atomic>
-#include <csignal>
-#include <cstring>
-#include <string>
 #include <thread>
 #include <vector>
+#include <cstring>
 
 using namespace proj2;
 
-static std::atomic<bool> terminate_flag(false);
+struct ClientRequest {
+    std::string reply_socket;
+    std::vector<std::string> files;
+    std::vector<uint32_t> rows;
+};
 
-/* Signalling the  handler */
-void handle_signal(int) {
-    terminate_flag.store(true);
+uint32_t read_uint32(const char* &ptr) {
+    uint32_t v;
+    std::memcpy(&v, ptr, sizeof(uint32_t));
+    ptr += sizeof(uint32_t);
+    return v;
 }
 
-/* Parsing the binary request */
-Request ParseRequest(const std::string& data) {
-    Request req;
+std::string read_string(const char* &ptr) {
+    uint32_t len = read_uint32(ptr);
+    std::string s(ptr, len);
+    ptr += len;
+    return s;
+}
 
-    const char* ptr = data.data();
-    size_t size = data.size();
-    size_t offset = 0;
+ClientRequest parse_request(const std::string &msg) {
 
-    auto read_u32 = [&](uint32_t &value) {
-        if (offset + 4 > size) {
-            throw std::runtime_error("Malformed request");
-        }
-        std::memcpy(&value, ptr + offset, 4);
-        offset += 4;
-    };
+    const char* ptr = msg.data();
 
-    uint32_t reply_len;
-    read_u32(reply_len);
+    ClientRequest req;
 
-    if (offset + reply_len > size) {
-        throw std::runtime_error("Malformed request");
-    }
+    req.reply_socket = read_string(ptr);
 
-    req.reply_socket.assign(ptr + offset, reply_len);
-    offset += reply_len;
+    uint32_t file_count = read_uint32(ptr);
 
-    uint32_t file_count;
-    read_u32(file_count);
+    for (uint32_t i=0; i < file_count; i++) {
+        std::string path = read_string(ptr);
+        uint32_t rows = read_uint32(ptr);
 
-    for (uint32_t i = 0; i < file_count; i++) {
-
-        uint32_t path_len;
-        read_u32(path_len);
-
-        if (offset + path_len > size) {
-            throw std::runtime_error("Malformed request");
-        }
-
-        std::string path(ptr + offset, path_len);
-        offset += path_len;
-
-        uint32_t rows;
-        read_u32(rows);
-
-        req.paths.push_back(path);
+        req.files.push_back(path);
         req.rows.push_back(rows);
     }
 
     return req;
 }
 
-/* Working the thread */
-void HandleRequest(const std::string& datagram) {
+void process_request(const std::string &msg) {
 
-    Request req = ParseRequest(datagram);
+    ClientRequest req = parse_request(msg);
 
-    std::uint32_t max_rows = 0;
+    uint32_t total_rows = 0;
+    
+    for(auto r : req.rows)
+        total_rows += r;
 
-    for (auto r : req.rows) {
-         if (r > max_rows) {
-            max_rows = r;
-         }
-    }
+    auto solver = ShaSolvers::Checkout(total_rows);
+    auto reader = FileReaders::Checkout(req.files.size(), &solver);
 
-    /* Acquiring the solvers first */
-    auto solver = ShaSolvers::Checkout(max_rows);
+    std::vector<std::vector<ReaderHandle::HashType>> hashes(req.files.size());
 
-    /* Acquire the readers */
-    auto reader = FileReaders::Checkout(req.paths.size(), &solver);
+    reader.Process(req.files, req.rows, &hashes);
 
-    std::vector<std::vector<ReaderHandle::HashType>> file_hashes;
+    std::vector<char> result;
+    result.reserve(total_rows * 64);
 
-    reader.Process(req.paths, req.rows, &file_hashes);
-
-    FileReaders::Checkin(std::move(reader));
-
-    std::vector<char> output;
-
-    for (auto& file : file_hashes) {
-        for (auto& hash : file) {
-
-            char buffer[65];
-
-        for (size_t i = 0; i < 32; i++) {
-            sprintf(buffer + (i * 2), "%02x", hash[i]);
-        }
-
-            output.insert(output.end(), buffer, buffer + 64);
-        }
-    }
-
-    ShaSolvers::Checkin(std::move(solver));
+    for(auto &file_hashes : hashes)
+        for(auto &h : file_hashes)
+            result.insert(result.end(), h.begin(), h.end());
 
     UnixDomainStreamClient client(req.reply_socket);
     client.Init();
 
-    client.Write(output.data(), output.size());
+    if (!result.empty()) {
+        client.Write(result.data(), result.size());
+    }
+
+    FileReaders::Checkin(std::move(reader));
+    ShaSolvers::Checkin(std::move(solver));
 }
 
-/* Main server functionality */
-int main(int argc, char* argv[]) {
+int main(int argc, char** argv) {
 
-    if (argc != 4) {
-        std::cerr << "Usage: proj2-server <socket_path> <readers> <solvers>\n";
+    if(argc != 4) {
+        std::cerr << "Usage: proj2-server <socket> <readers> <solvers>\n";
         return 1;
     }
 
     std::string socket_path = argv[1];
-    std::uint32_t reader_count = std::stoul(argv[2]);
-    std::uint32_t solver_count = std::stoul(argv[3]);
+    uint32_t reader_threads = std::stoul(argv[2]);
+    uint32_t solver_threads = std::stoul(argv[3]);
 
-    FileReaders::Init(reader_count);
-    ShaSolvers::Init(solver_count);
-
-    std::signal(SIGINT, handle_signal);
-    std::signal(SIGTERM, handle_signal);
+    FileReaders::Init(reader_threads);
+    ShaSolvers::Init(solver_threads);
 
     UnixDomainDatagramEndpoint server(socket_path);
     server.Init();
 
-    while (!terminate_flag.load()) {
+    while(true) {
 
         std::string peer;
-        std::string datagram = server.RecvFrom(&peer, 65536);
+        std::string msg = server.RecvFrom(&peer, 65536);
 
-        if (datagram.empty()) {
-            continue;
-        }
+        std::thread worker([msg]() {
+            process_request(msg);
+        });
 
-        std::thread worker(HandleRequest, datagram);
         worker.detach();
     }
 

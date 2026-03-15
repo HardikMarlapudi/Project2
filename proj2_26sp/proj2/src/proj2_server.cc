@@ -1,4 +1,4 @@
-// Copyright Hardik Marlapudi
+// Copyright 2026 Hardik Marlapudi. All Rights Reserved.
 
 #include "proj2/lib/domain_socket.h"
 #include "proj2/lib/file_reader.h"
@@ -11,11 +11,30 @@
 
 using namespace proj2;
 
+/**
+ * @struct ClientRequest
+ * @brief Represents a parsed request from a client.
+ * 
+ * The request contains:
+ * - reply socket : path of the socket where the server sends the response
+ * - files        : list of file paths requested by the client
+ * - rows         : number of rows to hash for each file
+ */
+
 struct ClientRequest {
     std::string reply_socket;
     std::vector<std::string> files;
     std::vector<uint32_t> rows;
 };
+
+/**
+ * @brief Reads a 32-bit unsigned integer from the message buffer.
+ * 
+ * The pointer is advanced after the value is read.
+ * 
+ * @param ptr Pointer to the current position in the message buffer
+ * @return uint32_t value read from the buffer
+ */
 
 uint32_t read_uint32(const char* &ptr) {
     uint32_t v;
@@ -24,12 +43,37 @@ uint32_t read_uint32(const char* &ptr) {
     return v;
 }
 
+/**
+ * @brief Reads a length-prefixed string from the message buffer.
+ * 
+ * Format
+ * [uint32 length][string characters]
+ * 
+ * @param ptr Pointer to the current position in the message buffer
+ * @return std::string extracted string
+ */
+
 std::string read_string(const char* &ptr) {
     uint32_t len = read_uint32(ptr);
     std::string s(ptr, len);
     ptr += len;
     return s;
 }
+
+/**
+ * @brief Parses a raw message from the client into a ClientRequest
+ * 
+ * Message format:
+ * reply_socket
+ * file_count
+ * file_path
+ * rows
+ * file_path
+ * rows
+ * 
+ * @param msg Raw message received from the client
+ * @return ClientRequest parsed request object
+ */
 
 ClientRequest parse_request(const std::string &msg) {
 
@@ -51,6 +95,20 @@ ClientRequest parse_request(const std::string &msg) {
 
     return req;
 }
+
+/**
+ * @brief Handles a single client request.
+ * 
+ * Steps that are performed:
+ * 1. Parse the request message
+ * 2. Determine total rows required
+ * 3. Checkout solver and reader resources
+ * 4. Process file hashing
+ * 5. Send hash results back to the client
+ * 6. Return resources to the pools
+ * 
+ * @param msg Raw message received from the client
+ */
 
 void process_request(const std::string &msg) {
 
@@ -85,6 +143,20 @@ void process_request(const std::string &msg) {
     FileReaders::Checkin(std::move(reader));
     ShaSolvers::Checkin(std::move(solver));
 }
+
+/**
+ * @brief Entry point of the concurrent SHA256 server.
+ * 
+ * Usage:
+ * proj2-server <socket_path> <reader_threads> <solver_threads>
+ * 
+ * Example:
+ * ./proj2-server /tmp/proj2.sock 4 32
+ * 
+ * @param argc number of command line arguments 
+ * @param argv command line argument values
+ * @return int program exit status
+ */
 
 int main(int argc, char** argv) {
 

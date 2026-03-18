@@ -37,10 +37,10 @@ struct ClientRequest {
  */
 
 uint32_t read_uint32(const char* &ptr) {
-    uint32_t v;
-    std::memcpy(&v, ptr, sizeof(uint32_t));
+    uint32_t value;
+    std::memcpy(&value, ptr, sizeof(uint32_t));
     ptr += sizeof(uint32_t);
-    return v;
+    return value;
 }
 
 /**
@@ -54,10 +54,10 @@ uint32_t read_uint32(const char* &ptr) {
  */
 
 std::string read_string(const char* &ptr) {
-    uint32_t len = read_uint32(ptr);
-    std::string s(ptr, len);
-    ptr += len;
-    return s;
+    uint32_t length = read_uint32(ptr);
+    std::string result(ptr, length);
+    ptr += length;
+    return result;
 }
 
 /**
@@ -79,9 +79,9 @@ ClientRequest parse_request(const std::string &msg) {
 
     const char* ptr = msg.data();
 
-    ClientRequest req;
+    ClientRequest request;
 
-    req.reply_socket = read_string(ptr);
+    request.reply_socket = read_string(ptr);
 
     uint32_t file_count = read_uint32(ptr);
 
@@ -89,11 +89,11 @@ ClientRequest parse_request(const std::string &msg) {
         std::string path = read_string(ptr);
         uint32_t rows = read_uint32(ptr);
 
-        req.files.push_back(path);
-        req.rows.push_back(rows);
+        request.files.push_back(path);
+        request.rows.push_back(rows);
     }
 
-    return req;
+    return request;
 }
 
 /**
@@ -112,19 +112,19 @@ ClientRequest parse_request(const std::string &msg) {
 
 void process_request(const std::string &msg) {
 
-    ClientRequest req = parse_request(msg);
+    ClientRequest request = parse_request(msg);
 
     uint32_t total_rows = 0;
     
-    for(auto r : req.rows)
+    for(auto r : request.rows)
         total_rows += r;
 
     auto solver = ShaSolvers::Checkout(total_rows);
-    auto reader = FileReaders::Checkout(req.files.size(), &solver);
+    auto reader = FileReaders::Checkout(request.files.size(), &solver);
 
-    std::vector<std::vector<ReaderHandle::HashType>> hashes(req.files.size());
+    std::vector<std::vector<ReaderHandle::HashType>> hashes(request.files.size());
 
-    reader.Process(req.files, req.rows, &hashes);
+    reader.Process(request.files, request.rows, &hashes);
 
     std::vector<char> result;
     result.reserve(total_rows * 64);
@@ -133,7 +133,7 @@ void process_request(const std::string &msg) {
         for(auto &h : file_hashes)
             result.insert(result.end(), h.begin(), h.end());
 
-    UnixDomainStreamClient client(req.reply_socket);
+    UnixDomainStreamClient client(request.reply_socket);
     client.Init();
 
     if (!result.empty()) {

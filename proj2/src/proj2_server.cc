@@ -3,6 +3,8 @@
 #include "proj2/lib/domain_socket.h"
 #include "proj2/lib/file_reader.h"
 #include "proj2/lib/sha_solver.h"
+#include "proj2/lib/thread_log.h"
+#include "proj2/lib/timings.h"
 
 #include <iostream>
 #include <thread>
@@ -10,7 +12,7 @@
 #include <cstring>
 
 using namespace proj2;
-
+    
 /**
  * @struct ClientRequest
  * @brief Represents a parsed request from a client.
@@ -127,7 +129,7 @@ void process_request(const std::string &msg) {
     reader.Process(request.files, request.rows, &hashes);
 
     std::vector<char> result;
-    result.reserve(total_rows * 64);
+    result.reserve(total_rows * 32);
 
     for(auto &file_hashes : hashes)
         for(auto &h : file_hashes)
@@ -158,7 +160,7 @@ void process_request(const std::string &msg) {
  * @return int program exit status
  */
 
-int main(int argc, char** argv) {
+int main(int argc, char* argv[]) {
 
     if(argc != 4) {
         std::cerr << "Usage: proj2-server <socket> <readers> <solvers>\n";
